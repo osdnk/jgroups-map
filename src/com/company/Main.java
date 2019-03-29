@@ -6,7 +6,6 @@ import org.jgroups.util.Util;
 import java.io.*;
 import java.util.HashMap;
 import java.util.Map;
-import java.util.Vector;
 import java.util.logging.LogManager;
 
 enum MessageType {
@@ -51,8 +50,8 @@ public class Main {
             } else if (line.startsWith("remove")) {
                 map.remove(line.split(" ")[1]);
             }
-            if (line.startsWith("print")) {
-                map.logMapState();
+            if (line.startsWith("log")) {
+                map.log();
             }
         }
     }
@@ -80,7 +79,7 @@ class DistributedMap implements Receiver, SimpleStringMap {
         return localMap.containsKey(key);
     }
 
-    public void logMapState() {
+    public void log() {
         System.out.println("state:");
         // iterating over set and writing state
         for (Map.Entry<String, Integer> item : localMap.entrySet())
@@ -123,7 +122,7 @@ class DistributedMap implements Receiver, SimpleStringMap {
             localMap.remove(mapMsg.key);
         }
         // Also, printing after adding or removing
-        logMapState();
+        log();
     }
 
     /***
