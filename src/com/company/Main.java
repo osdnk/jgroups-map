@@ -167,8 +167,7 @@ class DistributedMap implements Receiver, SimpleStringMap {
         }
 
         public void run() {
-            Vector<View> subgroups = (Vector<View>) view.getSubgroups();
-            View tmp_view = subgroups.firstElement();
+            View tmp_view = view.getSubgroups().get(0);
             Address local_addr = ch.getAddress();
             if (!tmp_view.getMembers().contains(local_addr)) {
                 System.out.println("Not member of the new primary partition ("
