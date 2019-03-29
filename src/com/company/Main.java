@@ -25,9 +25,9 @@ interface SimpleStringMap {
 }
 
 
-
 public class Main {
     private static DistributedMap map;
+
     public static void main(String[] args) throws Exception {
         // Removing useless logs
         LogManager.getLogManager().reset();
@@ -150,9 +150,9 @@ class DistributedMap implements Receiver, SimpleStringMap {
     }
 
     private static void handleView(JChannel channel, View view) {
-        if(view instanceof MergeView) {
+        if (view instanceof MergeView) {
             // Following docs it has to be run in another thread
-            ViewHandler handler = new ViewHandler(channel, (MergeView)view);
+            ViewHandler handler = new ViewHandler(channel, (MergeView) view);
             handler.start();
         }
     }
