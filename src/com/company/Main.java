@@ -144,23 +144,42 @@ class DistributedMap implements Receiver, SimpleStringMap {
 
     @Override
     public void viewAccepted(View view) {
+        System.out.println("Accepted");
         // Called when a change in membership has occurred
-        System.out.println("View accepted");
-        if (view instanceof MergeView) {
-            // If there's another partition and member is not in the first one, we're dropping our state
-            Vector<View> subgroups = (Vector<View>) ((MergeView) view).getSubgroups();
-            View firstView = subgroups.firstElement();
-            Address localAddress = jchannel.getAddress();
-            if (!firstView.getMembers().contains(localAddress)) {
-                System.out.println("dropping own state");
+        handleView(jchannel, view);
+    }
+
+    private static void handleView(JChannel channel, View view) {
+        if(view instanceof MergeView) {
+            ViewHandler handler = new ViewHandler(channel, (MergeView)view);
+            handler.start();
+        }
+    }
+
+    // followed by docs http://www.jgroups.org/manual/index.html#HandlingNetworkPartitions
+    private static class ViewHandler extends Thread {
+        JChannel ch;
+        MergeView view;
+
+        private ViewHandler(JChannel ch, MergeView view) {
+            this.ch = ch;
+            this.view = view;
+        }
+
+        public void run() {
+            Vector<View> subgroups = (Vector<View>) view.getSubgroups();
+            View tmp_view = subgroups.firstElement();
+            Address local_addr = ch.getAddress();
+            if (!tmp_view.getMembers().contains(local_addr)) {
+                System.out.println("Not member of the new primary partition ("
+                        + tmp_view + "), will re-acquire the state");
                 try {
-                    jchannel.getState(null, 10000);
+                    ch.getState(null, 30000);
                 } catch (Exception ex) {
-                    ex.printStackTrace();
                 }
             } else {
-                // If we're not member of the first group we're perceiving our state.
-                System.out.println("doing nothing");
+                System.out.println("Not member of the new primary partition ("
+                        + tmp_view + "), will do nothing");
             }
         }
     }
