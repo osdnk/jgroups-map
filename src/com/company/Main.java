@@ -126,19 +126,27 @@ class DistributedMap implements Receiver, SimpleStringMap {
         logMapState();
     }
 
-    @Override
-    public void getState(OutputStream output) throws Exception {
-        synchronized (localMap) {
-            // Overrode receiver method for obtaining state by another member on joining or adding partition
-            Util.objectToStream(localMap, new DataOutputStream(output));
-        }
-    }
+    /***
+     *
+     * STATE_TRANSFER is the existing transfer protocol, which transfers byte[] buffers around.
+     * However, at the state provider’s side, JGroups creates an output stream over the byte[] buffer,
+     * and passes the ouput stream to the getState(OutputStream) callback, and at the state requester’s
+     * side, an input stream is created and passed to the setState(InputStream) callback.
+     */
 
     @Override
     public void setState(InputStream input) throws Exception {
         synchronized (localMap) {
-            // Also, setting own state if needed
+            // Overrode Receiver method for obtaining state by another member on joining or adding partition
             localMap = Util.objectFromStream(new DataInputStream(input));
+        }
+    }
+
+    @Override
+    public void getState(OutputStream output) throws Exception {
+        synchronized (localMap) {
+            // Also, obtaining own state if needed
+            Util.objectToStream(localMap, new DataOutputStream(output));
         }
     }
 
