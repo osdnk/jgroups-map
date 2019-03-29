@@ -51,7 +51,7 @@ public class Main {
             } else if (line.startsWith("remove")) {
                 map.remove(line.split(" ")[1]);
             }
-            if (line.startsWith("map")) {
+            if (line.startsWith("print")) {
                 map.logMapState();
             }
         }
@@ -151,6 +151,7 @@ class DistributedMap implements Receiver, SimpleStringMap {
 
     private static void handleView(JChannel channel, View view) {
         if(view instanceof MergeView) {
+            // Following docs it has to be run in another thread
             ViewHandler handler = new ViewHandler(channel, (MergeView)view);
             handler.start();
         }
