@@ -9,38 +9,49 @@ import java.util.Map;
 import java.util.Vector;
 import java.util.logging.LogManager;
 
-enum MsgType {
+enum MessageType {
     ADD,
     REMOVE,
 }
 
+interface SimpleStringMap {
+    boolean containsKey(String key);
+
+    Integer get(String key);
+
+    void put(String key, Integer value);
+
+    Integer remove(String key);
+}
+
+
+
 public class Main {
-private static DistributedMap map;
+    private static DistributedMap map;
     public static void main(String[] args) throws Exception {
+        // Removing useless logs
         LogManager.getLogManager().reset();
-        System.setProperty("java.net.preferIPv4Stack","true");
-        map = new DistributedMap("michal-osadnik-software");
-        BufferedReader in=new BufferedReader(new InputStreamReader(System.in));
-        while(true) {
-            System.out.print("> "); System.out.flush();
-            String line=in.readLine().toLowerCase();
-            if(line.startsWith("quit") || line.startsWith("exit")) {
+        System.setProperty("java.net.preferIPv4Stack", "true");
+        // preparing new map
+        map = new DistributedMap();
+        BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
+        while (true) {
+            System.out.print("C: ");
+            String line = in.readLine().toLowerCase();
+            if (line.startsWith("quit") || line.startsWith("exit")) {
                 map.close();
                 return;
             }
-            if(line.startsWith("put")){
+            if (line.startsWith("put")) {
                 map.put(line.split(" ")[1], Integer.parseInt(line.split(" ")[2]));
-            } else
-            if(line.startsWith("get")){
-                System.out.println("result: "+map.get(line.split(" ")[1]));
-            } else
-            if(line.startsWith("containsKey")){
-                System.out.println("result: "+map.containsKey(line.split(" ")[1]));
-            } else
-            if(line.startsWith("remove")){
+            } else if (line.startsWith("get")) {
+                System.out.println("result: " + map.get(line.split(" ")[1]));
+            } else if (line.startsWith("containsKey")) {
+                System.out.println("result: " + map.containsKey(line.split(" ")[1]));
+            } else if (line.startsWith("remove")) {
                 map.remove(line.split(" ")[1]);
             }
-            if(line.startsWith("map")){
+            if (line.startsWith("map")) {
                 map.logMapState();
             }
         }
@@ -48,126 +59,126 @@ private static DistributedMap map;
 }
 
 
-class DistributedMap implements Receiver {
+class DistributedMap implements Receiver, SimpleStringMap {
     private JChannel jchannel;
     private HashMap<String, Integer> localMap;
-    DistributedMap(String channelId) throws Exception {
+
+    DistributedMap() throws Exception {
+        // creating channel and setting connection
         jchannel = new JChannel();
+        // delegating receiver
         jchannel.setReceiver(this);
-        jchannel.connect(channelId);
+        jchannel.connect("michal-osadnik-channel");
+        // initialazing set
         localMap = new HashMap<>();
+        // Setting initial state. If there's no other member, does nothing
+        // http://www.jgroups.org/manual/html/user-channel.html#StateTransfer
         jchannel.getState(null, 0);
     }
 
-    boolean containsKey(String key) {
+    public boolean containsKey(String key) {
         return localMap.containsKey(key);
     }
 
-
-    void logMapState(){
-        System.out.println("MAP:");
-        for (Map.Entry<String,Integer> item:localMap.entrySet())
-            System.out.println(item.getKey()+": "+item.getValue());
+    public void logMapState() {
+        System.out.println("state:");
+        // iterating over set and writing state
+        for (Map.Entry<String, Integer> item : localMap.entrySet())
+            System.out.println(item.getKey() + ": " + item.getValue());
     }
 
-    Integer get(String key) {
+    public Integer get(String key) {
         return localMap.get(key);
     }
 
-    void put(String key, Integer value) {
+    public void put(String key, Integer value) {
         try {
-            jchannel.send(new org.jgroups.Message(null, new Message(MsgType.ADD, key, value)));
+            // putting elements into set is dne by sending multicast message. Adding to local state is done on receiving
+            jchannel.send(new org.jgroups.Message(null, new Message(MessageType.ADD, key, value)));
         } catch (Exception e) {
             e.printStackTrace();
         }
     }
 
-    void remove(String key) {
+    public Integer remove(String key) {
         try {
-            jchannel.send(new org.jgroups.Message(null, new Message(MsgType.REMOVE, key)));
+            // removing is done in  a similar way as putting. Synchronizing prefaces local removing.
+            jchannel.send(new org.jgroups.Message(null, new Message(MessageType.REMOVE, key)));
         } catch (Exception e) {
             e.printStackTrace();
         }
+        return this.localMap.get(key);
     }
 
-    void close(){
+    void close() {
         jchannel.close();
     }
 
     public void receive(org.jgroups.Message msg) {
+        // local state handling
         Message mapMsg = msg.getObject();
-        if(mapMsg.type == MsgType.ADD){
+        if (mapMsg.type == MessageType.ADD) {
             localMap.put(mapMsg.key, mapMsg.value);
-        } else
-        if(mapMsg.type == MsgType.REMOVE){
+        } else if (mapMsg.type == MessageType.REMOVE) {
             localMap.remove(mapMsg.key);
         }
+        // Also, printing after adding or removing
         logMapState();
     }
 
+    @Override
     public void getState(OutputStream output) throws Exception {
         synchronized (localMap) {
+            // Overrode receiver method for obtaining state by another member on joining or adding partition
             Util.objectToStream(localMap, new DataOutputStream(output));
         }
     }
 
+    @Override
     public void setState(InputStream input) throws Exception {
         synchronized (localMap) {
+            // Also, setting own state if needed
             localMap = Util.objectFromStream(new DataInputStream(input));
         }
     }
 
+    @Override
     public void viewAccepted(View view) {
-        handleView(jchannel, view);
-    }
-    // http://www.jgroups.org/manual/index.html#HandlingNetworkPartitions
-    private static void handleView(JChannel ch, View new_view) {
-        if(new_view instanceof MergeView) {
-            ViewHandler handler = new ViewHandler(ch, (MergeView)new_view);
-            handler.start();
-        }
-    }
-
-    private static class ViewHandler extends Thread {
-        JChannel ch;
-        MergeView view;
-
-        private ViewHandler(JChannel ch, MergeView view) {
-            this.ch = ch;
-            this.view = view;
-        }
-
-        public void run() {
-            Vector<View> subgroups = (Vector<View>) view.getSubgroups();
-            View tmp_view = subgroups.firstElement(); // picks the first
-            Address local_addr = ch.getAddress();
-            if(!tmp_view.getMembers().contains(local_addr)) {
+        // Called when a change in membership has occurred
+        System.out.println("View accepted");
+        if (view instanceof MergeView) {
+            // If there's another partition and member is not in the first one, we're dropping our state
+            Vector<View> subgroups = (Vector<View>) ((MergeView) view).getSubgroups();
+            View firstView = subgroups.firstElement();
+            Address localAddress = jchannel.getAddress();
+            if (!firstView.getMembers().contains(localAddress)) {
                 System.out.println("dropping own state");
                 try {
-                    ch.getState(null, 10000);
+                    jchannel.getState(null, 10000);
+                } catch (Exception ex) {
+                    ex.printStackTrace();
                 }
-                catch(Exception ex) {
-                }
-            }
-            else {
+            } else {
+                // If we're not member of the first group we're perceiving our state.
                 System.out.println("doing nothing");
             }
         }
     }
 }
 
+// Message needs to be Serializable for transporting via a jchannel socket
 class Message implements Serializable {
-    MsgType type;
+    MessageType type;
     String key;
     Integer value;
 
-    Message(MsgType type, String key, Integer value){
+    Message(MessageType type, String key, Integer value) {
         this.type = type;
         this.key = key;
         this.value = value;
     }
 
-    Message(MsgType type, String key){
+    Message(MessageType type, String key) {
         this.type = type;
         this.key = key;
     }
