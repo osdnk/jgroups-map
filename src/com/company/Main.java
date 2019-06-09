@@ -25,33 +25,42 @@ interface SimpleStringMap {
 
 
 public class Main {
-    private static DistributedMap map;
+    private static DistributedMap sMap;
 
     public static void main(String[] args) throws Exception {
         // Removing useless logs
         LogManager.getLogManager().reset();
         System.setProperty("java.net.preferIPv4Stack", "true");
         // preparing new map
-        map = new DistributedMap();
+        sMap = new DistributedMap();
         BufferedReader in = new BufferedReader(new InputStreamReader(System.in));
         while (true) {
             System.out.print("C: ");
             String line = in.readLine().toLowerCase();
             if (line.startsWith("quit") || line.startsWith("exit")) {
-                map.close();
+                sMap.close();
                 return;
             }
             if (line.startsWith("put")) {
-                map.put(line.split(" ")[1], Integer.parseInt(line.split(" ")[2]));
+                sMap.put(line.split(" ")[1], Integer.parseInt(line.split(" ")[2]));
             } else if (line.startsWith("get")) {
-                System.out.println("result: " + map.get(line.split(" ")[1]));
+                System.out.println("result: " + sMap.get(line.split(" ")[1]));
             } else if (line.startsWith("containsKey")) {
-                System.out.println("result: " + map.containsKey(line.split(" ")[1]));
+                System.out.println("result: " + sMap.containsKey(line.split(" ")[1]));
             } else if (line.startsWith("remove")) {
-                map.remove(line.split(" ")[1]);
+                sMap.remove(line.split(" ")[1]);
+            } else if (line.startsWith("addr")) {
+                PhysicalAddress physicalAddress = (PhysicalAddress)
+                        sMap.mChannel.down(
+                                new Event(
+                                        Event.GET_PHYSICAL_ADDRESS, sMap.mChannel.getAddress()
+                                )
+                        );
+
+                System.out.println(physicalAddress.toString());
             }
             if (line.startsWith("log")) {
-                map.log();
+                sMap.log();
             }
         }
     }
@@ -59,20 +68,45 @@ public class Main {
 
 
 class DistributedMap implements Receiver, SimpleStringMap {
-    private JChannel mChannel;
-    private HashMap<String, Integer> mLocalMap;
+    private static // Message needs to be Serializable for transporting via a mChannel socket
+    class Message implements Serializable {
+        MessageType mType;
+        String mKey;
+        Integer mValue;
+
+        Message(MessageType type, String key, Integer value) {
+            mType = type;
+            mKey = key;
+            mValue = value;
+        }
+
+        Message(MessageType type, String key) {
+            mType = type;
+            mKey = key;
+        }
+    }
+    JChannel mChannel;
+    private final HashMap<String, Integer> mLocalMap;
 
     DistributedMap() throws Exception {
+        System.out.println("Starting map");
+
         // creating channel and setting connection
         mChannel = new JChannel();
         // delegating receiver
         mChannel.setReceiver(this);
         mChannel.connect("michal-osadnik-channel");
+        System.out.println("Connected to channel" + mChannel.getAddressAsString() + "\n cluster name: " + mChannel.getClusterName());
+
         // initialazing set
         mLocalMap = new HashMap<>();
         // Setting initial state. If there's no other member, does nothing
         // http://www.jgroups.org/manual/html/user-channel.html#StateTransfer
+        System.out.println("obtaining state if needed");
         mChannel.getState(null, 0);
+        System.out.println("And now the new state is: ");
+        log();
+
     }
 
     public boolean containsKey(String key) {
@@ -113,15 +147,22 @@ class DistributedMap implements Receiver, SimpleStringMap {
         mChannel.close();
     }
 
+
+    // Receiver delegation
+    @Override
     public void receive(org.jgroups.Message msg) {
+        System.out.println("Received a meesage");
         // local state handling
-        Message mapMsg = msg.getObject();
+        DistributedMap.Message mapMsg = msg.getObject();
         if (mapMsg.mType == MessageType.ADD) {
+            System.out.println("Adding " + mapMsg.mKey + " with val " + mapMsg.mValue);
             mLocalMap.put(mapMsg.mKey, mapMsg.mValue);
         } else if (mapMsg.mType == MessageType.REMOVE) {
+            System.out.println("Removing " + mapMsg.mKey);
             mLocalMap.remove(mapMsg.mKey);
         }
         // Also, printing after adding or removing
+        System.out.println("And now the new state is: ");
         log();
     }
 
@@ -135,16 +176,21 @@ class DistributedMap implements Receiver, SimpleStringMap {
 
     @Override
     public void setState(InputStream input) throws Exception {
+        System.out.println("setting state");
         synchronized (mLocalMap) {
-            // Overrode Receiver method for obtaining state by another member on joining or adding partition
-            mLocalMap = Util.objectFromStream(new DataInputStream(input));
+            // Overrode Receiver method for setting state by another member
+            HashMap<String, Integer> newMap = Util.objectFromStream(new DataInputStream(input));
+            mLocalMap.clear();
+            mLocalMap.putAll(newMap);
         }
+        System.out.println("And now the new state is: ");
+        log();
     }
 
-    @Override
     public void getState(OutputStream output) throws Exception {
+        System.out.println("getting state");
         synchronized (mLocalMap) {
-            // Also, obtaining own state if needed
+            // Also, obtaining state if needed
             Util.objectToStream(mLocalMap, new DataOutputStream(output));
         }
     }
@@ -158,6 +204,8 @@ class DistributedMap implements Receiver, SimpleStringMap {
 
     private static void handleView(JChannel channel, View view) {
         if (view instanceof MergeView) {
+            System.out.println("Merging started");
+
             // Following docs it has to be run in another thread
             ViewHandler handler = new ViewHandler(channel, (MergeView) view);
             handler.start();
@@ -181,31 +229,15 @@ class DistributedMap implements Receiver, SimpleStringMap {
                 System.out.println("Not member of the new primary partition ("
                         + firstView + "), will re-acquire the state");
                 try {
+
                     mChannel.getState(null, 30000);
                 } catch (Exception ex) {
                 }
             } else {
-                System.out.println("Not member of the new primary partition ("
+                System.out.println("member of the primary partition ("
                         + firstView + "), will do nothing");
             }
         }
     }
 }
 
-// Message needs to be Serializable for transporting via a mChannel socket
-class Message implements Serializable {
-    MessageType mType;
-    String mKey;
-    Integer mValue;
-
-    Message(MessageType type, String key, Integer value) {
-        mType = type;
-        mKey = key;
-        mValue = value;
-    }
-
-    Message(MessageType type, String key) {
-        mType = type;
-        mKey = key;
-    }
-}
